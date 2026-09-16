@@ -1,0 +1,3 @@
+import {requireChatGPTUser} from '../chatgpt-auth';import {admin,getRecord} from '@/lib/content';import Admin from './editor';
+export const dynamic='force-dynamic';
+export default async function Page(){await requireChatGPTUser('/admin');if(!await admin())return <main className="unavailable"><h1>هذه الصفحة خاصة بإدارة آسيا أجينسي</h1><p>This account does not have editing access.</p><a href="/signout-with-chatgpt?return_to=/admin" target="_top">تغيير الحساب / Switch account</a><a href="/">العودة إلى الموقع / Back to site</a></main>;try{const record=await getRecord();return <Admin initial={record.content} revision={record.revision}/>}catch{return <main className="unavailable">تعذّر تحميل لوحة الإدارة. حاول مرة أخرى. / Unable to load. Please retry.</main>}}

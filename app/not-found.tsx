@@ -1,0 +1,1 @@
+export default function NotFound(){return <main className="unavailable"><h1>الصفحة غير متاحة</h1><p>قد يكون الرابط تغيّر أو العمل لم يُنشر بعد. / This page is unavailable.</p><a className="pill" href="/work">استكشف أعمالنا / Explore our work</a></main>}
