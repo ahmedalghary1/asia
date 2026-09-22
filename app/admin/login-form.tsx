@@ -21,16 +21,21 @@ export default function LoginForm() {
     setError('')
 
     try {
-      const res = await loginAction(username, password)
-      if (res.success) {
-        router.refresh()
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json() as { success?: boolean; error?: string };
+      if (res.ok && data.success) {
+        window.location.href = '/admin';
       } else {
-        setError(res.error || 'اسم المستخدم أو كلمة المرور غير صحيحة')
-        setLoading(false)
+        setError(data.error || 'اسم المستخدم أو كلمة المرور غير صحيحة');
+        setLoading(false);
       }
     } catch {
-      setError('تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.')
-      setLoading(false)
+      setError('تعذر الاتصال بالخادم. يرجى المحاولة مرة أخرى.');
+      setLoading(false);
     }
   }
 
@@ -121,7 +126,7 @@ export default function LoginForm() {
 
         <div className="mt-8 pt-6 border-t border-[#e2dcc9] text-center">
           <a
-            href="/site"
+            href="/"
             target="_blank"
             className="text-xs text-[#79644f] hover:text-[#512300] transition-colors underline inline-flex items-center gap-1"
           >

@@ -9,28 +9,72 @@ import {AlertDialog,AlertDialogContent,AlertDialogTitle,AlertDialogDescription,A
 import {Input} from '@/components/ui/input';import {Textarea} from '@/components/ui/textarea';
 import {Toaster,toast} from 'sonner';
 import {Plus,ArrowUp,ArrowDown,Trash2,Save,ExternalLink,Upload,Globe,ShieldCheck} from 'lucide-react';
-import {logoutAction,updateCredentialsAction,getAdminProfile} from './actions';
 export default function Admin({initial,revision}:{initial:Content;revision:number}){
  const [currentUsername,setCurrentUsername]=useState('admin'),[credCurrentPass,setCredCurrentPass]=useState(''),[credNewUser,setCredNewUser]=useState('admin'),[credNewPass,setCredNewPass]=useState(''),[credBusy,setCredBusy]=useState(false);
-  useEffect(()=>{getAdminProfile().then(res=>{if(res.success&&res.username){setCurrentUsername(res.username);setCredNewUser(res.username);}}).catch(()=>{});},[]);
+  useEffect(()=>{
+    fetch('/api/admin/credentials')
+      .then(r=>r.json())
+      .then((res:any)=>{
+        if(res?.success&&res?.username){
+          setCurrentUsername(res.username);
+          setCredNewUser(res.username);
+        }
+      })
+      .catch(()=>{});
+  },[]);
+
+  useEffect(()=>{
+    const checkSession = async () => {
+      try {
+        const r = await fetch('/api/admin/credentials');
+        if (r.status === 401 || r.status === 403) {
+          window.location.href = '/admin';
+        }
+      } catch {}
+    };
+    window.addEventListener('focus', checkSession);
+    const timer = setInterval(checkSession, 30000);
+    return () => {
+      window.removeEventListener('focus', checkSession);
+      clearInterval(timer);
+    };
+  }, []);
+
   async function handleUpdateCredentials(){
     if(!credCurrentPass||!credNewUser||!credNewPass){toast.error(t('يرجى ملء جميع الحقول','Please fill all fields'));return;}
     setCredBusy(true);
     try{
-      const res=await updateCredentialsAction(credCurrentPass,credNewUser,credNewPass);
-      if(res.success){
-        toast.success(t(res.message||'تم التحديث بنجاح','Updated successfully'));
+      const r = await fetch('/api/admin/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: credCurrentPass,
+          newUsername: credNewUser,
+          newPassword: credNewPass
+        })
+      });
+      const res = await r.json() as { success?: boolean; error?: string; message?: string };
+      if(r.ok && res.success){
+        toast.success(t(res.message||'تم التحديث بنجاح وتسجيل خروج الأجهزة الأخرى','Updated successfully'));
         setCurrentUsername(credNewUser.trim());
         setCredCurrentPass('');
         setCredNewPass('');
       }else{
+        if(r.status === 401){
+          toast.error(t('انتهت الجلسة أو تم تغيير البيانات من جهاز آخر. جاري التحويل...','Session expired. Redirecting...'));
+          setTimeout(()=>{ window.location.href='/admin'; }, 1500);
+          return;
+        }
         toast.error(t(res.error||'فشل التحديث',res.error||'Update failed'));
       }
-    }catch{
+    }catch(err: any){
       toast.error(t('تعذر الاتصال بالخادم','Connection error'));
     }finally{setCredBusy(false);}
   }
-  async function handleSignout(){await logoutAction();window.location.href='/admin';}
+  async function handleSignout(){
+    try { await fetch('/api/admin/logout', { method: 'POST' }); } catch {}
+    window.location.href='/admin';
+  }
   const [data,setData]=useState(initial),[rev,setRev]=useState(revision),[lang,setLang]=useState<Lang>('ar'),[selected,setSelected]=useState(initial.campaigns[0]?.id||''),[busy,setBusy]=useState(false),[dirty,setDirty]=useState(false),[status,setStatus]=useState(''),[confirm,setConfirm]=useState<{type:'campaign'|'category';id:string}|null>(null);
  const t=(ar:string,en:string)=>lang==='ar'?ar:en;
  function change(fn:(next:Content)=>void){setData(old=>{const next=structuredClone(old);fn(next);return next});setDirty(true);setStatus('')}
@@ -41,8 +85,8 @@ export default function Admin({initial,revision}:{initial:Content;revision:numbe
  function move(kind:'campaigns'|'categories',index:number,delta:number){change(d=>{const a=d[kind];const j=index+delta;if(j>=0&&j<a.length)[a[index],a[j]]=[a[j],a[index]]})}
  function mediaMove(index:number,delta:number){if(!current)return;const a=[...current.media];const j=index+delta;if(j>=0&&j<a.length){[a[index],a[j]]=[a[j],a[index]];update({media:a})}}
  function pair(label:string,value:Words,onChange:(v:Words)=>void,large=false){const Control=large?Textarea:Input;return <fieldset className="pair"><legend>{label}</legend><label>العربية<Control dir="rtl" value={value.ar} onChange={e=>onChange({...value,ar:e.target.value})}/></label><label>English<Control dir="ltr" value={value.en} onChange={e=>onChange({...value,en:e.target.value})}/></label></fieldset>}
- async function save(){setBusy(true);setStatus('');try{const r=await fetch('/api/content',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:data,revision:rev})});const body=await r.json() as {revision:number;error?:string};if(!r.ok){const msg=r.status===409?t('الموقع اتعدل من جلسة تانية. احتفظ بتعديلاتك وأعد تحميل الصفحة قبل الحفظ.','The site changed in another session. Keep your edits and reload before saving.'):r.status===400?t('راجع العناوين باللغتين والقسم والغلاف. الكامبين المنشور يحتاج صورة أو فيديو واحد على الأقل.','Check both titles, category, cover and at least one media item for published campaigns.'):t('تعذّر الحفظ. تعديلاتك ما زالت موجودة؛ حاول مرة أخرى.','Could not save. Your edits are still here; please retry.');throw new Error(msg)}setRev(body.revision);setDirty(false);setStatus(t('تم حفظ التغييرات على الموقع.','Changes saved to the site.'));toast.success(t('تم الحفظ','Saved'))}catch(e){setStatus((e as Error).message);toast.error(t('لم يتم الحفظ','Not saved'))}finally{setBusy(false)}}
-  async function upload(files:FileList|null,target:'media'|'cover'|'logo'|0|1|2){if(!files?.length)return;const ownerId=selected;setBusy(true);setStatus('');try{const uploaded:Media[]=[];for(const file of Array.from(files)){const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream','X-Filename':encodeURIComponent(file.name)},body:file});let b: any;try{b=await r.json();}catch{throw new Error(t('استجابة غير متوقعة من السيرفر ('+r.status+')','Unexpected server response ('+r.status+')'));}if(!r.ok){throw new Error(b?.error||t('فشل الرفع ('+r.status+')','Upload failed ('+r.status+')'));}uploaded.push({...b,alt:{ar:file.name,en:file.name}})}change(d=>{if(typeof target==='number'){const images=heroImages(d);images[target]=uploaded[0].url;d.settings.heroImages=[...images];return}if(target==='logo'){d.settings.logo=uploaded[0].url;return}const c=d.campaigns.find(c=>c.id===ownerId);if(!c)return;if(target==='cover')c.cover=uploaded[0].url;else c.media.push(...uploaded)});toast.success(t('تم الرفع. احفظ التغييرات لتظهر على الموقع.','Uploaded. Save changes to update the site.'))}catch(err:any){const msg=err?.message||t('تعذّر رفع الملفات. استخدم صورًا أو MP4/WebM بحد أقصى 30 ميجابايت للملف.','Upload failed. Use images or MP4/WebM files up to 30 MB each.');setStatus(msg);toast.error(msg)}finally{setBusy(false)}}
+ async function save(){setBusy(true);setStatus('');try{const r=await fetch('/api/content',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:data,revision:rev})});if(r.status===401||r.status===403){toast.error(t('انتهت الجلسة أو تم تغيير بيانات الدخول من جهاز آخر. أعد تسجيل الدخول.','Session expired or credentials changed from another device. Please log in again.'));setTimeout(()=>{window.location.href='/admin';},1500);return;}const body=await r.json() as {revision:number;error?:string};if(!r.ok){const msg=r.status===409?t('الموقع اتعدل من جلسة تانية. احتفظ بتعديلاتك وأعد تحميل الصفحة قبل الحفظ.','The site changed in another session. Keep your edits and reload before saving.'):r.status===400?t('راجع العناوين باللغتين والقسم والغلاف. الكامبين المنشور يحتاج صورة أو فيديو واحد على الأقل.','Check both titles, category, cover and at least one media item for published campaigns.'):t('تعذّر الحفظ. تعديلاتك ما زالت موجودة؛ حاول مرة أخرى.','Could not save. Your edits are still here; please retry.');throw new Error(msg)}setRev(body.revision);setDirty(false);setStatus(t('تم حفظ التغييرات على الموقع.','Changes saved to the site.'));toast.success(t('تم الحفظ','Saved'))}catch(e){setStatus((e as Error).message);toast.error(t('لم يتم الحفظ','Not saved'))}finally{setBusy(false)}}
+  async function upload(files:FileList|null,target:'media'|'cover'|'logo'|0|1|2){if(!files?.length)return;const ownerId=selected;setBusy(true);setStatus('');try{const uploaded:Media[]=[];for(const file of Array.from(files)){const r=await fetch('/api/upload',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream','X-Filename':encodeURIComponent(file.name)},body:file});if(r.status===401||r.status===403){toast.error(t('انتهت الجلسة أو تم تغيير بيانات الدخول من جهاز آخر. أعد تسجيل الدخول.','Session expired or credentials changed from another device. Please log in again.'));setTimeout(()=>{window.location.href='/admin';},1500);return;}let b: any;try{b=await r.json();}catch{throw new Error(t('استجابة غير متوقعة من السيرفر ('+r.status+')','Unexpected server response ('+r.status+')'));}if(!r.ok){throw new Error(b?.error||t('فشل الرفع ('+r.status+')','Upload failed ('+r.status+')'));}uploaded.push({...b,alt:{ar:file.name,en:file.name}})}change(d=>{if(typeof target==='number'){const images=heroImages(d);images[target]=uploaded[0].url;d.settings.heroImages=[...images];return}if(target==='logo'){d.settings.logo=uploaded[0].url;return}const c=d.campaigns.find(c=>c.id===ownerId);if(!c)return;if(target==='cover')c.cover=uploaded[0].url;else c.media.push(...uploaded)});toast.success(t('تم الرفع. احفظ التغييرات لتظهر على الموقع.','Uploaded. Save changes to update the site.'))}catch(err:any){const msg=err?.message||t('تعذّر رفع الملفات. استخدم صورًا أو MP4/WebM بحد أقصى 30 ميجابايت للملف.','Upload failed. Use images or MP4/WebM files up to 30 MB each.');setStatus(msg);toast.error(msg)}finally{setBusy(false)}}
  function remove(){if(!confirm)return;if(confirm.type==='category'&&data.campaigns.some(c=>c.categoryId===confirm.id)){toast.error(t('انقل كامبينات القسم لقسم آخر أولًا.','Move this category’s campaigns to another category first.'));setConfirm(null);return}if(confirm.type==='category'&&data.categories.length===1){toast.error(t('يجب الاحتفاظ بقسم واحد على الأقل.','Keep at least one category.'));setConfirm(null);return}change(d=>{if(confirm.type==='campaign')d.campaigns=d.campaigns.filter(c=>c.id!==confirm.id);else d.categories=d.categories.filter(c=>c.id!==confirm.id)});setConfirm(null)}
  return <div className="admin" dir={lang==='ar'?'rtl':'ltr'}><Toaster position="top-center"/><header className="admin-head"><a href="/"><img src={data.settings.logo} alt="ASIA"/></a><div><h1>{t('إدارة آسيا أجينسي','ASIA site management')}</h1><p>{t('الأعمال والأقسام ومحتوى الموقع','Projects, services and site content')}</p></div><button className="language" onClick={()=>setLang(lang==='ar'?'en':'ar')}><Globe size={18}/>{t('English','العربية')}</button><a className="text-link" href="/" target="_blank">{t('عرض الموقع','View site')}<ExternalLink size={16}/></a></header><div className="savebar"><span>{busy?t('جارٍ التنفيذ…','Working…'):dirty?t('تعديلات غير محفوظة','Unsaved changes'):t('التغييرات محفوظة','Up to date')}</span><button className="pill" disabled={busy||!dirty} onClick={save}><Save size={18}/>{t('حفظ التغييرات','Save changes')}</button></div>{status&&<p className="admin-status" role="status">{status}</p>}
  <Tabs defaultValue="campaigns" dir={lang==='ar'?'rtl':'ltr'}><TabsList className="admin-tabs"><TabsTrigger value="campaigns">{t('الكامبينات','Campaigns')}</TabsTrigger><TabsTrigger value="categories">{t('الأقسام','Categories')}</TabsTrigger><TabsTrigger value="appearance">{t('صور البداية والخطوط','Hero images & fonts')}</TabsTrigger><TabsTrigger value="settings">{t('بيانات الموقع','Site settings')}</TabsTrigger></TabsList>
