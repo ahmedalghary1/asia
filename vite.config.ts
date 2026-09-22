@@ -33,6 +33,12 @@ const localBindingConfig = {
         },
       ]
     : [],
+  kv_namespaces: [
+    {
+      binding: "MEDIA_KV",
+      id: "7a7e8972d0d648778170737c4a783909",
+    },
+  ],
 };
 
 export default defineConfig(async () => {

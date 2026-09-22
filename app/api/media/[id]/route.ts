@@ -1,2 +1,59 @@
-import {admin,bucket,getContent} from '@/lib/content';
-export async function GET(req:Request,{params}:{params:Promise<{id:string}>}){try{const {id}=await params;if(!/^[a-f0-9-]{36}$/.test(id))return new Response('Not found',{status:404});const isAdmin=await admin();const content=await getContent(isAdmin);const path='/api/media/'+id;const used=content.settings.logo===path||content.settings.heroImages?.includes(path)||content.campaigns.some(c=>c.cover===path||c.media.some(m=>m.url===path));if(!used&&!isAdmin)return new Response('Not found',{status:404});const object=await bucket().get(id,{range:req.headers});if(!object)return new Response('Not found',{status:404});const headers=new Headers({'Cache-Control':'private, max-age=60','X-Content-Type-Options':'nosniff','Accept-Ranges':'bytes'});object.writeHttpMetadata(headers);headers.set('etag',object.httpEtag);let status=200;if(object.range&&'offset' in object.range&&'length' in object.range){const r=object.range as {offset:number;length:number};headers.set('Content-Range',`bytes ${r.offset}-${r.offset+r.length-1}/${object.size}`);headers.set('Content-Length',String(r.length));status=206;}return new Response(object.body,{headers,status});}catch{return new Response('Unavailable',{status:503})}}
+import {readMedia} from '@/lib/content';
+
+export async function GET(req:Request,{params}:{params:Promise<{id:string}>}){
+  try{
+    const {id}=await params;
+    if(!/^[a-f0-9-]{36}$/.test(id)){
+      return new Response('Not found',{status:404});
+    }
+
+    const media = await readMedia(id);
+    if(!media){
+      return new Response('Not found',{status:404});
+    }
+
+    const headers = new Headers({
+      'Content-Type': media.contentType || 'application/octet-stream',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Accept-Ranges': 'bytes',
+      'ETag': `"${id}"`
+    });
+
+    // Check If-None-Match for 304 Not Modified
+    if(req.headers.get('if-none-match') === `"${id}"`){
+      return new Response(null, { status: 304, headers });
+    }
+
+    const isArrayBuffer = media.data instanceof ArrayBuffer;
+    const totalSize = media.size || (isArrayBuffer ? (media.data as ArrayBuffer).byteLength : undefined);
+
+    const rangeHeader = req.headers.get('range');
+    if(rangeHeader && isArrayBuffer && totalSize !== undefined){
+      const buffer = media.data as ArrayBuffer;
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10) || 0;
+      const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+
+      if(start >= totalSize || end >= totalSize || start > end){
+        headers.set('Content-Range', `bytes */${totalSize}`);
+        return new Response(null, { status: 416, headers });
+      }
+
+      const chunk = buffer.slice(start, end + 1);
+      headers.set('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+      headers.set('Content-Length', String(chunk.byteLength));
+      return new Response(chunk, { status: 206, headers });
+    }
+
+    if(totalSize !== undefined){
+      headers.set('Content-Length', String(totalSize));
+    }
+
+    return new Response(media.data as BodyInit, { status: 200, headers });
+  }catch (e) {
+    console.error('Error serving media:', e);
+    return new Response('Unavailable',{status:503});
+  }
+}
+
