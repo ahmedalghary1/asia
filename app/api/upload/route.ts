@@ -9,18 +9,38 @@ export async function POST(req:Request){
     return Response.json({error:'طلب من مصدر غير مصرح به (Cross-Origin)'},{status:403});
   }
   try{
-    const form=await req.formData();
-    const file=form.get('file');
-    if(!(file instanceof File)){
-      return Response.json({error:'لم يتم إرسال ملف صحيح'},{status:400});
+    const reqContentType = req.headers.get('content-type') || '';
+    let buffer: ArrayBuffer;
+    let fileName = '';
+    let mimeType = '';
+
+    if (reqContentType.includes('multipart/form-data')) {
+      const form = await req.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) {
+        return Response.json({error:'لم يتم إرسال ملف صحيح'},{status:400});
+      }
+      buffer = await file.arrayBuffer();
+      fileName = file.name || '';
+      mimeType = file.type || '';
+    } else {
+      buffer = await req.arrayBuffer();
+      const rawName = req.headers.get('x-filename');
+      fileName = rawName ? decodeURIComponent(rawName) : 'file.jpg';
+      mimeType = reqContentType.split(';')[0].trim();
     }
-    if(file.size > 30 * 1024 * 1024){
+
+    if (!buffer || buffer.byteLength === 0) {
+      return Response.json({error:'الملف المرسل فارغ'},{status:400});
+    }
+
+    if(buffer.byteLength > 30 * 1024 * 1024){
       return Response.json({error:'حجم الملف يتجاوز 30 ميجابايت'},{status:400});
     }
 
     // Determine content type safely
-    let contentType = file.type;
-    const name = (file.name || '').toLowerCase();
+    let contentType = mimeType;
+    const name = fileName.toLowerCase();
     if (!contentType || contentType === 'application/octet-stream') {
       if (name.endsWith('.jpg') || name.endsWith('.jpeg')) contentType = 'image/jpeg';
       else if (name.endsWith('.png')) contentType = 'image/png';
@@ -34,8 +54,8 @@ export async function POST(req:Request){
       else if (name.endsWith('.jfif')) contentType = 'image/jpeg';
     }
 
-    const isImage = contentType.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg|heic|avif|jfif)$/i.test(file.name);
-    const isVideo = contentType.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg)$/i.test(file.name);
+    const isImage = contentType.startsWith('image/') || /\.(jpe?g|png|webp|gif|svg|heic|avif|jfif)$/i.test(fileName);
+    const isVideo = contentType.startsWith('video/') || /\.(mp4|webm|mov|m4v|ogg)$/i.test(fileName);
 
     if(!isImage && !isVideo){
       return Response.json({error:'نوع الملف غير مدعوم. يرجى استخدام صورة أو فيديو.'},{status:400});
@@ -45,8 +65,7 @@ export async function POST(req:Request){
       contentType = isImage ? 'image/jpeg' : 'video/mp4';
     }
 
-    const id=crypto.randomUUID();
-    const buffer=await file.arrayBuffer();
+    const id = crypto.randomUUID();
     await saveMedia(id, buffer, contentType);
     return Response.json({
       url:'/api/media/'+id,
