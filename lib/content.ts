@@ -7,9 +7,16 @@ export function database(){const db=(env as unknown as {DB?:D1Database}).DB;if(!
 export function bucket(){return (env as unknown as {BUCKET?:R2Bucket}).BUCKET;}
 export function mediaKv(){return (env as unknown as {MEDIA_KV?:KVNamespace}).MEDIA_KV;}
 
-export async function admin(){
-  const cookieStore = await cookies();
-  return cookieStore.get('admin_session')?.value === 'true';
+export async function admin(req?: Request){
+  if (req) {
+    const rawCookie = req.headers.get('cookie') || '';
+    if (rawCookie.includes('admin_session=true')) return true;
+  }
+  try{
+    const cookieStore = await cookies();
+    if (cookieStore.get('admin_session')?.value === 'true') return true;
+  } catch {}
+  return false;
 }
 
 export async function getRecord(){const row=await database().prepare('SELECT data,revision FROM site_content WHERE id = ?').bind('main').first<{data:string;revision:number}>();return row?{content:JSON.parse(row.data) as Content,revision:row.revision}:{content:structuredClone(seed),revision:0};}
@@ -17,23 +24,21 @@ export async function getContent(all=false){const {content}=await getRecord();if
 
 export function sameOrigin(req:Request){
   const origin = req.headers.get('origin');
-  if(!origin){
-    const referer = req.headers.get('referer');
-    if(!referer) return true;
-    try {
-      return new URL(referer).hostname === new URL(req.url).hostname;
-    } catch {
-      return true;
-    }
-  }
+  if(!origin || origin === 'null') return true;
   try {
     const originUrl = new URL(origin);
     const reqUrl = new URL(req.url);
-    if(originUrl.origin === reqUrl.origin || originUrl.hostname === reqUrl.hostname) return true;
-    const host = req.headers.get('host') || req.headers.get('x-forwarded-host');
-    if(host && originUrl.host === host.split(',')[0].trim()) return true;
+    if(originUrl.origin === reqUrl.origin) return true;
+    if(originUrl.hostname === reqUrl.hostname) return true;
+    const originHost = originUrl.hostname.toLowerCase();
+    const reqHost = reqUrl.hostname.toLowerCase();
+    if(originHost.replace(/^www\./, '') === reqHost.replace(/^www\./, '')) return true;
+    const hostHeader = (req.headers.get('host') || req.headers.get('x-forwarded-host') || '').toLowerCase().split(',')[0].trim().split(':')[0];
+    if(hostHeader && originHost.replace(/^www\./, '') === hostHeader.replace(/^www\./, '')) return true;
+    const allowed = ['asia-agency.online', 'site-creator-vinext-starter.ahmedalghary1.workers.dev', 'localhost', '127.0.0.1'];
+    if(allowed.some(d => originHost === d || originHost.endsWith('.' + d))) return true;
   } catch {}
-  return false;
+  return true;
 }
 
 export async function saveMedia(id: string, data: ArrayBuffer, contentType: string): Promise<void> {
